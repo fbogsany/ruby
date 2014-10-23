@@ -5466,10 +5466,11 @@ rb_ary_each_with_object(VALUE array, VALUE memo)
  *  See also Enumerable#inject
  */
 static VALUE
-rb_ary_inject(int argc, VALUE *argv, VALUE ary)
+rb_ary_inject(int argc, VALUE *argv, VALUE array)
 {
     ID id;
     VALUE op, init = Qnil;
+    volatile VALUE ary = array;
     long i, len = RARRAY_LEN(ary);
     int n = rb_scan_args(argc, argv, "02", &init, &op);
 
@@ -6100,7 +6101,7 @@ Init_Array(void)
     rb_define_method(rb_cArray, "none?", rb_ary_none_p, 0);
     rb_define_method(rb_cArray, "find", rb_ary_find, -1);
     rb_define_method(rb_cArray, "detect", rb_ary_find, -1);
-#if 0
+#if 1
     rb_define_method(rb_cArray, "inject", rb_ary_inject, -1);
     rb_define_method(rb_cArray, "reduce", rb_ary_inject, -1);
 #endif
