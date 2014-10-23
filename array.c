@@ -26,7 +26,9 @@
 
 VALUE rb_cArray;
 
-static ID id_cmp, id_div, id_power;
+static ID id_cmp, id_div, id_power, id_call;
+
+#define id_eqq  idEqq
 
 #define ARY_DEFAULT_SIZE 16
 #define ARY_MAX_SIZE (LONG_MAX / (int)sizeof(VALUE))
@@ -3833,6 +3835,7 @@ rb_ary_hash(VALUE ary)
 /*
  *  call-seq:
  *     ary.include?(object)   -> true or false
+ *     ary.member?(object)    -> true or false
  *
  *  Returns +true+ if the given +object+ is present in +self+ (that is, if any
  *  element <code>==</code> +object+), otherwise returns +false+.
@@ -5409,6 +5412,318 @@ rb_ary_drop_while(VALUE ary)
 
 /*
  *  call-seq:
+ *     ary.each_with_index(*args) { |obj, i| block } ->  ary
+ *     ary.each_with_index(*args)                    ->  an_enumerator
+ *
+ *  See also Enumerable#each_with_index
+ */
+VALUE
+rb_ary_each_with_index(int argc, VALUE *argv, VALUE array)
+{
+    long i;
+    volatile VALUE ary = array;
+
+    RETURN_SIZED_ENUMERATOR(ary, argc, argv, ary_enum_length);
+    for (i=0; i<RARRAY_LEN(ary); i++) {
+        rb_yield_values(2, RARRAY_AREF(ary, i), INT2NUM(i));
+    }
+    return ary;
+}
+
+/*
+ *  call-seq:
+ *    ary.each_with_object(obj) { |(*args), memo_obj| ... }  ->  obj
+ *    ary.each_with_object(obj)                              ->  an_enumerator
+ *
+ *  See also Enumerable#each_with_object
+ */
+VALUE
+rb_ary_each_with_object(VALUE array, VALUE memo)
+{
+    long i;
+    volatile VALUE ary = array;
+
+    RETURN_SIZED_ENUMERATOR(ary, 1, &memo, ary_enum_length);
+    for (i=0; i<RARRAY_LEN(ary); i++) {
+        rb_yield_values(2, RARRAY_AREF(ary, i), memo);
+    }
+    return memo;
+}
+
+/*
+ *  call-seq:
+ *     ary.inject(initial, sym) -> obj
+ *     ary.inject(sym)          -> obj
+ *     ary.inject(initial) { |memo, obj| block }  -> obj
+ *     ary.inject          { |memo, obj| block }  -> obj
+ *     ary.reduce(initial, sym) -> obj
+ *     ary.reduce(sym)          -> obj
+ *     ary.reduce(initial) { |memo, obj| block }  -> obj
+ *     ary.reduce          { |memo, obj| block }  -> obj
+ *
+ *  See also Enumerable#inject
+ */
+static VALUE
+rb_ary_inject(int argc, VALUE *argv, VALUE array)
+{
+    ID id;
+    VALUE op, init = Qnil;
+    volatile VALUE ary = array;
+    long i = 0;
+    long len = RARRAY_LEN(ary);
+    int n = rb_scan_args(argc, argv, "02", &init, &op);
+
+    if (n == 0 || n == 1 && rb_block_given_p()) {
+        if (!len) return init;
+        if (!argc) {
+            init = RARRAY_AREF(ary, 0);
+            ++i;
+        }
+        for (; i < RARRAY_LEN(ary); ++i) {
+            init = rb_yield_values(2, init, RARRAY_AREF(ary, i));
+        }
+        return init;
+    }
+    switch (n) {
+      case 1:
+        id = rb_check_id(&init);
+        op = id ? ID2SYM(id) : init;
+        argc = 0;
+        init = Qnil;
+        break;
+      case 2:
+        if (rb_block_given_p()) {
+            rb_warning("given block not used");
+        }
+        id = rb_check_id(&op);
+        if (id) op = ID2SYM(id);
+        break;
+    }
+    if (!len) return init;
+    if (!argc) {
+        init = RARRAY_AREF(ary, 0);
+        ++i;
+    }
+    for (; i < RARRAY_LEN(ary); ++i) {
+        if (SYMBOL_P(op)) {
+            init = rb_funcall(init, SYM2ID(op), 1, RARRAY_AREF(ary, i));
+        }
+        else {
+            VALUE args[2];
+            args[0] = op;
+            args[1] = RARRAY_AREF(ary, i);
+            init = rb_f_send(numberof(args), args, init);
+        }
+    }
+    return init;
+}
+
+/*
+ *  call-seq:
+ *     ary.flat_map       { |obj| block } -> array
+ *     ary.collect_concat { |obj| block } -> array
+ *     ary.flat_map                       -> an_enumerator
+ *     ary.collect_concat                 -> an_enumerator
+ *
+ *  See also Enumerable#flat_map
+ */
+static VALUE
+rb_ary_flat_map(VALUE ary)
+{
+    long i;
+    VALUE obj, tmp, result;
+
+    RETURN_SIZED_ENUMERATOR(ary, 0, 0, ary_enum_length);
+
+    result = rb_ary_new();
+    for (i = 0; i < RARRAY_LEN(ary); ++i) {
+        obj = rb_yield(RARRAY_AREF(ary, i));
+        tmp = rb_check_array_type(obj);
+        if (NIL_P(obj)) {
+            rb_ary_push(result, obj);
+        }
+        else {
+            rb_ary_concat(result, tmp);
+        }
+    }
+
+    return result;
+}
+
+/*
+ *  call-seq:
+ *     ary.grep(pattern)                  -> array
+ *     ary.grep(pattern) { |obj| block }  -> array
+ *
+ *  See also Enumerable#grep
+ */
+static VALUE
+rb_ary_grep(VALUE ary, VALUE pat)
+{
+    long i, len = RARRAY_LEN(ary);
+    const VALUE *ptr = RARRAY_CONST_PTR(ary);
+    VALUE obj, result = rb_ary_new();
+
+    if (!len) return result;
+    if (!rb_block_given_p()) {
+        for (i = 0; i < len; ++i) {
+            if (RTEST(rb_funcall(pat, id_eqq, 1, ptr[i]))) {
+                rb_ary_push(result, ptr[i]);
+            }
+        }
+    }
+    else {
+        for (i = 0; i < RARRAY_LEN(ary); ++i) {
+            obj = RARRAY_AREF(ary, i);
+            if (RTEST(rb_funcall(pat, id_eqq, 1, obj))) {
+                rb_ary_push(result, rb_yield(obj));
+            }
+        }
+    }
+
+    return result;
+}
+
+/*
+ *  call-seq:
+ *     ary.partition { |obj| block } -> [ true_array, false_array ]
+ *     ary.partition                 -> an_enumerator
+ *
+ *  See also Enumerable#partition
+ */
+static VALUE
+rb_ary_partition(VALUE ary)
+{
+    long i;
+    VALUE false_array, true_array, obj;
+    RETURN_SIZED_ENUMERATOR(ary, 0, 0, ary_enum_length);
+
+    false_array = rb_ary_new();
+    true_array = rb_ary_new();
+    for (i = 0; i < RARRAY_LEN(ary); ++i) {
+        obj = RARRAY_AREF(ary, i);
+        if (RTEST(rb_yield(obj))) {
+            rb_ary_push(true_array, obj);
+        }
+        else {
+            rb_ary_push(false_array, obj);
+        }
+    }
+
+    return rb_assoc_new(true_array, false_array);
+}
+
+/*
+ *  call-seq:
+ *     ary.detect(ifnone = nil) { |obj| block } -> obj or nil
+ *     ary.find(ifnone = nil)   { |obj| block } -> obj or nil
+ *     ary.detect(ifnone = nil)                 -> an_enumerator
+ *     ary.find(ifnone = nil)                   -> an_enumerator
+ *
+ *  See also Enumerable#find
+ */
+static VALUE
+rb_ary_find(int argc, VALUE *argv, VALUE ary)
+{
+    long i;
+    VALUE obj, if_none;
+
+    rb_scan_args(argc, argv, "01", &if_none);
+    RETURN_ENUMERATOR(ary, argc, argv);
+    for (i = 0; i < RARRAY_LEN(ary); ++i) {
+        obj = RARRAY_AREF(ary, i);
+        if (RTEST(rb_yield(obj))) return obj;
+    }
+    if (!NIL_P(if_none)) {
+        return rb_funcall(if_none, id_call, 0, 0);
+    }
+    return Qnil;
+}
+
+/*
+ *  call-seq:
+ *     ary.one? [{ |obj| block }]   -> true or false
+ *
+ *  See also Enumerable#one?
+ */
+static VALUE
+rb_ary_one_p(VALUE ary)
+{
+    long i, len = RARRAY_LEN(ary);
+    const VALUE *ptr = RARRAY_CONST_PTR(ary);
+    VALUE result = Qundef;
+
+    if (!len) return Qfalse;
+    if (!rb_block_given_p()) {
+        for (i = 0; i < len; ++i) {
+            if (RTEST(ptr[i])) {
+                if (result == Qundef) result = Qtrue;
+                else if (result == Qtrue) return Qfalse;
+            }
+        }
+    }
+    else {
+        for (i = 0; i < RARRAY_LEN(ary); ++i) {
+            if (RTEST(rb_yield(RARRAY_AREF(ary, i)))) {
+                if (result == Qundef) result = Qtrue;
+                else if (result == Qtrue) return Qfalse;
+            }
+        }
+    }
+    if (result == Qundef) return Qfalse;
+    return result;
+}
+
+/*
+ *  call-seq:
+ *     ary.none? [{ |obj| block }]   -> true or false
+ *
+ *  See also Enumerable#none?
+ */
+static VALUE
+rb_ary_none_p(VALUE ary)
+{
+    long i, len = RARRAY_LEN(ary);
+    const VALUE *ptr = RARRAY_CONST_PTR(ary);
+
+    if (!len) return Qtrue;
+    if (!rb_block_given_p()) {
+        for (i = 0; i < len; ++i) if (RTEST(ptr[i])) return Qfalse;
+    }
+    else {
+        for (i = 0; i < RARRAY_LEN(ary); ++i) {
+            if (RTEST(rb_yield(RARRAY_AREF(ary, i)))) return Qfalse;
+        }
+    }
+    return Qtrue;
+}
+
+/*
+ *  call-seq:
+ *     ary.all? [{ |obj| block } ]   -> true or false
+ *
+ *  See also Enumerable#all?
+ */
+static VALUE
+rb_ary_all_p(VALUE ary)
+{
+    long i, len = RARRAY_LEN(ary);
+    const VALUE *ptr = RARRAY_CONST_PTR(ary);
+
+    if (!len) return Qtrue;
+    if (!rb_block_given_p()) {
+        for (i = 0; i < len; ++i) if (!RTEST(ptr[i])) return Qfalse;
+    }
+    else {
+        for (i = 0; i < RARRAY_LEN(ary); ++i) {
+            if (!RTEST(rb_yield(RARRAY_AREF(ary, i)))) return Qfalse;
+        }
+    }
+    return Qtrue;
+}
+
+/*
+ *  call-seq:
  *     ary.any? [{ |obj| block }]   -> true or false
  *
  *  See also Enumerable#any?
@@ -5687,6 +6002,7 @@ Init_Array(void)
     rb_define_method(rb_cArray, "inspect", rb_ary_inspect, 0);
     rb_define_alias(rb_cArray,  "to_s", "inspect");
     rb_define_method(rb_cArray, "to_a", rb_ary_to_a, 0);
+    rb_define_method(rb_cArray, "entries", rb_ary_to_a, 0);
     rb_define_method(rb_cArray, "to_h", rb_ary_to_h, 0);
     rb_define_method(rb_cArray, "to_ary", rb_ary_to_ary_m, 0);
     rb_define_method(rb_cArray, "frozen?",  rb_ary_frozen_p, 0);
@@ -5729,6 +6045,7 @@ Init_Array(void)
     rb_define_method(rb_cArray, "collect!", rb_ary_collect_bang, 0);
     rb_define_method(rb_cArray, "map", rb_ary_collect, 0);
     rb_define_method(rb_cArray, "map!", rb_ary_collect_bang, 0);
+    rb_define_method(rb_cArray, "find_all", rb_ary_select, 0);
     rb_define_method(rb_cArray, "select", rb_ary_select, 0);
     rb_define_method(rb_cArray, "select!", rb_ary_select_bang, 0);
     rb_define_method(rb_cArray, "keep_if", rb_ary_keep_if, 0);
@@ -5744,6 +6061,7 @@ Init_Array(void)
     rb_define_method(rb_cArray, "clear", rb_ary_clear, 0);
     rb_define_method(rb_cArray, "fill", rb_ary_fill, -1);
     rb_define_method(rb_cArray, "include?", rb_ary_includes, 1);
+    rb_define_method(rb_cArray, "member?", rb_ary_includes, 1);
     rb_define_method(rb_cArray, "<=>", rb_ary_cmp, 1);
 
     rb_define_method(rb_cArray, "slice", rb_ary_aref, -1);
@@ -5783,8 +6101,23 @@ Init_Array(void)
     rb_define_method(rb_cArray, "bsearch", rb_ary_bsearch, 0);
     rb_define_method(rb_cArray, "any?", rb_ary_any_p, 0);
 
+    rb_define_method(rb_cArray, "all?", rb_ary_all_p, 0);
+    rb_define_method(rb_cArray, "one?", rb_ary_one_p, 0);
+    rb_define_method(rb_cArray, "none?", rb_ary_none_p, 0);
+    rb_define_method(rb_cArray, "find", rb_ary_find, -1);
+    rb_define_method(rb_cArray, "detect", rb_ary_find, -1);
+    rb_define_method(rb_cArray, "inject", rb_ary_inject, -1);
+    rb_define_method(rb_cArray, "reduce", rb_ary_inject, -1);
+    rb_define_method(rb_cArray, "each_with_index", rb_ary_each_with_index, -1);
+    rb_define_method(rb_cArray, "each_with_object", rb_ary_each_with_object, 1);
+    rb_define_method(rb_cArray, "partition", rb_ary_partition, 0);
+    rb_define_method(rb_cArray, "grep", rb_ary_grep, 1);
+    rb_define_method(rb_cArray, "flat_map", rb_ary_flat_map, 0);
+    rb_define_method(rb_cArray, "collect_concat", rb_ary_flat_map, 0);
+
     id_cmp = rb_intern("<=>");
     id_random = rb_intern("random");
     id_div = rb_intern("div");
     id_power = rb_intern("**");
+    id_call = rb_intern("call");
 }

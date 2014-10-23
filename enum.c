@@ -15,8 +15,6 @@
 #include "id.h"
 #include "internal.h"
 
-VALUE rb_f_send(int argc, VALUE *argv, VALUE recv);
-
 VALUE rb_mEnumerable;
 
 static ID id_next;
