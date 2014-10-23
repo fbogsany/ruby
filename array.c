@@ -5471,13 +5471,17 @@ rb_ary_inject(int argc, VALUE *argv, VALUE array)
     ID id;
     VALUE op, init = Qnil;
     volatile VALUE ary = array;
-    long i, len = RARRAY_LEN(ary);
+    long i = 0;
+    long len = RARRAY_LEN(ary);
     int n = rb_scan_args(argc, argv, "02", &init, &op);
 
     if (n == 0 || n == 1 && rb_block_given_p()) {
         if (!len) return init;
-        if (!argc) init = RARRAY_AREF(ary, 0);
-        for (i = 1; i < RARRAY_LEN(ary); ++i) {
+        if (!argc) {
+            init = RARRAY_AREF(ary, 0);
+            ++i;
+        }
+        for (; i < RARRAY_LEN(ary); ++i) {
             init = rb_yield_values(2, init, RARRAY_AREF(ary, i));
         }
         return init;
@@ -5498,8 +5502,11 @@ rb_ary_inject(int argc, VALUE *argv, VALUE array)
         break;
     }
     if (!len) return init;
-    if (!argc) init = RARRAY_AREF(ary, 0);
-    for (i = 1; i < RARRAY_LEN(ary); ++i) {
+    if (!argc) {
+        init = RARRAY_AREF(ary, 0);
+        ++i;
+    }
+    for (; i < RARRAY_LEN(ary); ++i) {
         if (SYMBOL_P(op)) {
             init = rb_funcall(init, SYM2ID(op), 1, RARRAY_AREF(ary, i));
         }
