@@ -24,8 +24,6 @@
 #endif
 #include <assert.h>
 
-VALUE rb_f_send(int argc, VALUE *argv, VALUE recv);
-
 VALUE rb_cArray;
 
 static ID id_cmp, id_div, id_power, id_call;
@@ -6108,10 +6106,8 @@ Init_Array(void)
     rb_define_method(rb_cArray, "none?", rb_ary_none_p, 0);
     rb_define_method(rb_cArray, "find", rb_ary_find, -1);
     rb_define_method(rb_cArray, "detect", rb_ary_find, -1);
-#if 1
     rb_define_method(rb_cArray, "inject", rb_ary_inject, -1);
     rb_define_method(rb_cArray, "reduce", rb_ary_inject, -1);
-#endif
     rb_define_method(rb_cArray, "each_with_index", rb_ary_each_with_index, -1);
     rb_define_method(rb_cArray, "each_with_object", rb_ary_each_with_object, 1);
     rb_define_method(rb_cArray, "partition", rb_ary_partition, 0);
